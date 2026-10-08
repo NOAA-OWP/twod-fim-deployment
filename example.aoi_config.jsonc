@@ -1,0 +1,37 @@
+// AOI config: the payload for the seed, author and f2f commands.
+// Pass it by path, local or s3://:
+//   just seed-network <workdir>/aoi_config.jsonc
+//
+// {source_data} stands for TWOD_FIM_SOURCE_DATA_PREFIX, filled in from .env.
+// A relative path is relative to this file.
+//
+// Commented-out keys are optional; left out, they fall back to the
+// system-wide defaults.
+{
+  // Label for people. Optional.
+  "name": "huc6_120401",
+  // Free text. Optional.
+  "description": "HUC6 120401. Network from modify_network with stream_order_filter_threshold 3.",
+  // Required by seed-network and author-intent. GeoPackage, layer reach_network.
+  "network": "<workdir>/<identity_hash>/network.gpkg",
+  // Required by seed-lakes. GeoPackage, layer lakes_polygons, keyed by lake_id.
+  "lakes": "{source_data}/hydrofabric/nhf.gpkg",
+  // Required by seed-coasts. GeoPackage, layer coastal_influence_polygons, keyed by coast_id.
+  "coasts": "{source_data}/coastal_influence/coastal_influence.gpkg"
+  // Per-reach flows for author-intent: .parquet or .csv.
+  // "flow_statistics": "{source_data}/<flows>.parquet",
+  // Column names in flow_statistics.
+  // "flow_reach_id_column": "<reach-id-column>",
+  // "flow_q_lower_column": "<high-flow-threshold-column>",
+  // "flow_q_upper_column": "<100-year-discharge-column>",
+  // Flow statistics columns exported by f2f as AEP flows.
+  // "flow_aep_columns": ["<aep-column>", "<aep-column>"],
+  // Elevation source. Must be an address a job can open (s3://, https://, /vsi...).
+  // "dem_source": "{source_data}/<dem>.tif",
+  // Land cover source. Same rules as dem_source.
+  // "lulc_source": "{source_data}/<land-cover>.tif",
+  // Land-cover to Manning's n JSON. Must be s3:// and must already exist.
+  // "lulc_lookup": "{source_data}/<lookup>.json",
+  // [lower, upper]: narrow each reach's discharge bounds, to keep a test run short.
+  // "q_bound_factors": [1.3, 0.7]
+}

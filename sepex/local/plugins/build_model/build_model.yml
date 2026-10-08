@@ -1,0 +1,200 @@
+info:
+  version: '0.1.0'
+  id: buildModel
+  title: Build Model
+  description: Build a 2D FIM hydraulic model for a reach
+  jobControlOptions:
+    - async-execute
+  outputTransmission:
+    - reference
+
+host:
+  type: docker
+  image: build_model:local
+
+command: []
+
+config:
+  maxResources:
+    cpus: 1
+    memory: 2048
+  envVars:
+    - BUILDMODEL_AWS_ENDPOINT_URL
+    - BUILDMODEL_AWS_ACCESS_KEY_ID
+    - BUILDMODEL_AWS_SECRET_ACCESS_KEY
+    - BUILDMODEL_AWS_DEFAULT_REGION
+    - BUILDMODEL_AWS_S3_ENDPOINT
+    - BUILDMODEL_AWS_VIRTUAL_HOSTING
+    - BUILDMODEL_AWS_HTTPS
+
+inputs:
+  - id: reach_id
+    title: reach_id
+    description: Reach identifier
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 1
+    maxOccurs: 1
+
+  - id: reach_network_path
+    title: reach_network_path
+    description: S3 path to the reach network GeoParquet, sorted by reach_id
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 1
+    maxOccurs: 1
+
+  - id: upstream_reach_ids
+    title: upstream_reach_ids
+    description: Ids of the reaches draining into this one
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 99
+
+  - id: upstream_mainstem_reach_id
+    title: upstream_mainstem_reach_id
+    description: Upstream reach with the largest drainage area; null for a headwater
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: base_output_path
+    title: base_output_path
+    description: S3 path prefix for model artifacts
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 1
+    maxOccurs: 1
+
+  - id: lulc_source
+    title: lulc_source
+    description: Connection string for the LULC source dataset
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: grid_resolution
+    title: grid_resolution
+    description: DEM grid resolution in meters
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: epsg_code
+    title: epsg_code
+    description: Coordinate reference system EPSG code
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: dem_source
+    title: dem_source
+    description: DEM source path or URL
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: lulc_lookup
+    title: lulc_lookup
+    description: Land cover to Manning's n lookup table
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: domain_buffer
+    title: domain_buffer
+    description: Buffer distance around reach geometry in CRS units
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+  - id: other_geometries
+    title: other_geometries
+    description: >-
+      Additional geometries whose extent the model domain must cover. Each entry
+      is either a WKT string or the path to a GeoJSON; the loop sends paths.
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 99
+
+  - id: domain
+    title: domain
+    description: >-
+      Authored model domain bbox [xmin, ymin, xmax, ymax] in epsg_code CRS
+      units, already snapped to the grid_resolution grid. Used exactly as given;
+      other_geometries and domain_buffer then do not affect the domain. Omit to
+      let the job compute the domain. Sourced from desired_state.model_domain,
+      snapped by the loop.
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 4
+
+  - id: ds_of_lake
+    title: ds_of_lake
+    description: >-
+      Whether a lake sits immediately upstream of this reach. Sourced from
+      reach_network.lake_outlet.
+    input:
+      literalDataDomain:
+        dataType: value
+        valueDefinition:
+          anyValue: true
+    minOccurs: 0
+    maxOccurs: 1
+
+outputs:
+  - id: plugin_results
+    title: plugin_results
+    description: Build result with identity_hash, model_id, and build_model_version
+    output:
+      transmissionMode:
+        - value

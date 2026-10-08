@@ -5,10 +5,8 @@ __pycache__/
 dist/
 .pytest_cache/
 
-# Dagster
+# Local dev
 *.db
-.tmp_dagster_home_*
-.dg/
 .logs_queue/
 .nux/
 
@@ -30,9 +28,15 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 lambda_placeholder.zip
+lambda_batch_status.zip
 
 # Local deployment data
 /.data/
 
 # Local env overrides
-.env
+*.env
+!example.env
+!example.hybrid.env
+!example.cloud.env
+!sepex_local.env
+reconciler/testdata/outputs/*

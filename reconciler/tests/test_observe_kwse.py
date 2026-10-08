@@ -1,0 +1,188 @@
+"""Tests for KWSE observation."""
+
+import pytest
+
+from recon import observe, plan, scenarios
+
+REACH, DOWNSTREAM = "100", "200"
+MODEL = "5f14368c_N350S296E449W355"
+RUN_HASH = "af1436c4"
+
+
+def scenario(q, z, ds_wse, ds_bc, ds_type="KWSE"):
+    return plan.PlannedScenario(
+        q=q, z=z,
+        downstream=plan.DownstreamRun(q=q, wse=ds_wse, bc_type=ds_type, bc_value=ds_bc),
+        seed=plan.Seed(q=q, bc_type="ND", bc_value=12000.0))
+
+
+def a_plan(scenarios_=(), skipped=()):
+    return plan.Plan(scenarios=tuple(scenarios_), skipped=tuple(skipped), ceilings=())
+
+
+def context(p):
+    return scenarios.Planned(
+        plan=p, model_id=MODEL, run_identity_hash=RUN_HASH, nd_slope=12000.0,
+        downstream_id=DOWNSTREAM, ds_model_id="aa119e0c_N1S1E1W1",
+        ds_run_identity_hash=RUN_HASH)
+
+
+@pytest.fixture
+def wired(monkeypatch):
+    state = {"written": None, "deleted": False, "manifests": {}}
+
+    monkeypatch.setattr(observe.intent, "effective",
+                        lambda r, **kw: {"reach_id": r, "revision": 3})
+    monkeypatch.setattr(observe.identity, "model_identity",
+                        lambda w: ({}, "5f14368c"))
+    monkeypatch.setattr(observe.identity, "verify_scenario_manifest",
+                        lambda *a, **kw: [])
+
+    def fake_one(sql, params=None, **kw):
+        if "materialized_kwse_runs" in sql:
+            return None
+        if "materialized_models" in sql:
+            return {"identity_hash": "5f14368c"}
+        return None
+
+    def fake_query(sql, params=None, **kw):
+        if sql.strip().startswith("DELETE"):
+            state["deleted"] = True
+            return []
+        state["written"] = params
+        return []
+
+    monkeypatch.setattr(observe.db, "one", fake_one)
+    monkeypatch.setattr(observe.db, "query", fake_query)
+    monkeypatch.setattr(observe.storage, "read_json",
+                        lambda path: state["manifests"].get(path))
+    monkeypatch.setattr(
+        observe.storage, "scenario_manifest_path",
+        lambda r, m, h, d: f"s3://b/reach={r}/{m}/{h}/{d}/scenario_manifest.json")
+    return state
+
+
+def publish(state, q, z, nominal_wse):
+    folder = scenarios.scenario_dir("KWSE", z, q)
+    state["manifests"][f"s3://b/reach={REACH}/{MODEL}/{RUN_HASH}/{folder}"
+                       "/scenario_manifest.json"] = {
+        "properties": {"nominal_wse": nominal_wse}}
+
+
+def test_a_skipped_target_is_not_expected_and_does_not_block_the_row(wired, monkeypatch):
+    p = a_plan([scenario(200, 224.0, 224.3, 221.0),
+                scenario(200, 226.0, 226.1, 223.0)],
+               skipped=[plan.SkippedTarget(q=200, z=225.0, nearest_wse=224.3,
+                                           distance=0.7)])
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(p))
+    publish(wired, 200, 224.0, 225.1)
+    publish(wired, 200, 226.0, 227.4)
+
+    result = observe.observe_kwse_runs(REACH)
+    assert result["found"] == "2 scenarios"
+    assert result["skipped"] == 1
+    assert wired["written"] is not None
+
+
+def test_an_empty_plan_is_materialized_rather_than_pending(wired, monkeypatch):
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(a_plan()))
+    result = observe.observe_kwse_runs(REACH)
+    assert result["found"] == "0 scenarios"
+    assert wired["written"] is not None
+
+
+def test_a_missing_scenario_writes_no_row(wired, monkeypatch):
+    p = a_plan([scenario(200, 224.0, 224.3, 221.0), scenario(200, 226.0, 226.1, 223.0)])
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(p))
+    publish(wired, 200, 224.0, 225.1)
+
+    result = observe.observe_kwse_runs(REACH)
+    assert result["found"] is None
+    assert "no manifest yet" in result["note"]
+    assert wired["written"] is None
+
+
+def test_a_refused_manifest_writes_no_row(wired, monkeypatch):
+    p = a_plan([scenario(200, 224.0, 224.3, 221.0)])
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(p))
+    monkeypatch.setattr(observe.identity, "verify_scenario_manifest",
+                        lambda *a, **kw: ["manifest reach_id 999 != 100"])
+    publish(wired, 200, 224.0, 225.1)
+
+    result = observe.observe_kwse_runs(REACH)
+    assert result["found"] is None
+    assert result["refused"]
+    assert wired["written"] is None
+
+
+def test_an_unplannable_reach_retracts_rather_than_writing(wired, monkeypatch):
+    def refuse(r, **kw):
+        raise scenarios.NotPlannable("reach 100 is terminal")
+    monkeypatch.setattr(scenarios, "planned", refuse)
+
+    result = observe.observe_kwse_runs(REACH)
+    assert result["found"] is None and "terminal" in result["note"]
+    assert wired["deleted"] is True
+
+
+def test_a_model_that_is_not_the_one_intent_implies_retracts(wired, monkeypatch):
+    monkeypatch.setattr(observe.identity, "model_identity", lambda w: ({}, "deadbeef"))
+    result = observe.observe_kwse_runs(REACH)
+    assert "is not the deadbeef" in result["note"]
+
+
+def test_the_index_pairs_achieved_stage_with_imposed_stage(wired, monkeypatch):
+    p = a_plan([scenario(200, 224.0, 224.3, 221.0), scenario(900, 226.0, 226.1, 223.0)])
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(p))
+    publish(wired, 200, 224.0, 225.1)
+    publish(wired, 900, 226.0, 227.4)
+
+    observe.observe_kwse_runs(REACH)
+    import json
+    index = json.loads(wired["written"][3])
+    assert index == [{"q": 200, "runs": [{"wse": 225.1, "bc": 224.0}]},
+                     {"q": 900, "runs": [{"wse": 227.4, "bc": 226.0}]}]
+
+
+def test_runs_are_grouped_by_discharge_and_sorted_by_achieved_stage(wired, monkeypatch):
+    p = a_plan([scenario(200, 226.0, 226.1, 223.0), scenario(200, 224.0, 224.3, 221.0)])
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(p))
+    publish(wired, 200, 226.0, 227.4)
+    publish(wired, 200, 224.0, 225.1)
+
+    observe.observe_kwse_runs(REACH)
+    import json
+    index = json.loads(wired["written"][3])
+    assert len(index) == 1
+    assert [r["wse"] for r in index[0]["runs"]] == [225.1, 227.4]
+
+
+def test_the_row_records_the_revision_it_proves(wired, monkeypatch):
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: context(a_plan()))
+    observe.observe_kwse_runs(REACH)
+    assert wired["written"][4] == 3
+
+
+SPREAD = [(200, 224.0), (200, 225.0), (900, 226.0)]
+
+
+@pytest.mark.parametrize("published", [(), SPREAD[:1], SPREAD[1:], SPREAD])
+@pytest.mark.parametrize("refused", [None, (200, 224.0)])
+def test_the_step_is_satisfied_exactly_when_nothing_is_left_to_submit(
+        wired, monkeypatch, published, refused):
+    p = a_plan([scenario(q, z, z + 0.1, z - 3.0) for q, z in SPREAD])
+    ctx = context(p)
+    monkeypatch.setattr(scenarios, "planned", lambda r, **kw: ctx)
+    for q, z in published:
+        publish(wired, q, z, z + 1.0)
+    if refused:
+        bad = scenarios.scenario_dir("KWSE", refused[1], refused[0])
+        monkeypatch.setattr(observe.identity, "verify_scenario_manifest",
+                            lambda m, r, h, mid, folder: ["refused"] if folder == bad else [])
+
+    observe.observe_kwse_runs(REACH)
+    left = [(s.q, s.z) for chain in scenarios.pending(REACH, ctx) for s in chain]
+
+    assert (wired["written"] is not None) == (left == [])
+    expected = [s for s in SPREAD if s not in published or s == refused]
+    assert left == expected
